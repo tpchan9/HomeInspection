@@ -21,6 +21,7 @@ class StateController {
     private let INSPECTION = 1
     private let DEFAULT_DATA = 2
     private let RESULT = 3
+    private let TOKEN = 4
     
     
     
@@ -31,6 +32,7 @@ class StateController {
     // TODO: Need a way to get the next available inspection id from the server. Maybe use a temp id for offline cache, then assign a permanent id right before integrating into database.
     private var inspectionId: Int? = nil
     private var nextResultId: Int = 0
+    private var token: String? = nil
     
     // Arrays are indexed by their respective unique id's
     
@@ -61,12 +63,13 @@ class StateController {
         print("init state")
         
         self.dataIsInitialized = false
+        postFromURL(option: TOKEN)
         
         // Add a null (id = 0) comment (its function TBD later, maybe errors?)
         comments.append(Comment(commentId: 0, subSectionId: -1, rank: -1, commentText: "ERROR, COMMENT WITH ID 0", defaultFlags: [Int8](), active: false))
         
         // Get and parse data from database
-        pullFromUrl(option: DEFAULT_DATA)
+        getFromURL(option: DEFAULT_DATA)
         
         
         // Polling for completion of database pull and parsing. Simple, but semaphores may be more efficient design (save extra fraction of a second and no wake then sleep again)
@@ -215,8 +218,75 @@ class StateController {
     
     /* Database Integration Functions */
     
+    func postFromURL(option: Int) {
+        var endPointURL: String = ""
+        var body: JSON = [:]
+        
+        switch option {
+        case self.TOKEN:
+            endPointURL = "http://crm.professionalhomeinspection.net/api/users/token.json"
+            body["username"].string = "Test"
+            body["password"].string = "badpassword1"
+            break
+        default:
+            break
+        }
+        
+        guard let url = URL(string: endPointURL) else {
+            print("Error cannot create POST URL")
+            self.wasPullError = true
+            return
+        }
+        do {
+            var urlRequest = URLRequest(url: url)
+            urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpMethod = "POST"
+            try urlRequest.httpBody = body.rawData()
+            
+            let session = URLSession.shared
+            let task = session.dataTask(with: urlRequest) {
+                (data, response, error) in
+                guard error == nil else {
+                    print("error calling POST on option")
+                    self.wasPullError = true
+                    return
+                }
+                guard let responseData = data else {
+                    print ("Error: did not recieve data")
+                    self.wasPullError = true
+                    return
+                }
+                do {
+                    let json = JSON(data: responseData)
+                    switch option {
+                    case self.TOKEN:
+                        self.parseToken(json: json)
+                        break
+                    default:
+                        print("Cannot parse JSON of type \(option)")
+                        break
+                    }
+                }
+            }
+            task.resume()
+        }
+        catch {
+            print("Caught exception in POST URL")
+        }
+    }
+    func parseToken(json: JSON) {
+        if !json["success"].boolValue {
+            print("Error recieving token")
+            self.wasPullError = true
+            return
+        }
+        self.token = "?token=" + json["data"]["token"].string!
+        print("Got token ")
+        print(self.token ?? "Error didn't get token")
+    }
     
-    func pullFromUrl(option: Int) {
+    
+    func getFromURL(option: Int) {
         var endPointURL: String = ""
         
         switch option {
@@ -232,7 +302,7 @@ class StateController {
         }
         
         guard let url = URL(string: endPointURL) else {
-            print("Error: cannot create URL")
+            print("Error: cannot create GET URL")
             self.wasPullError = true
             return
         }
@@ -258,16 +328,17 @@ class StateController {
                 switch option {
                 case self.INSPECTION:
                     // Parse inspection?
-                    break;
+                    break
                 case self.DEFAULT_DATA:
                     self.parseDefaultData(json: json)
                     self.dataIsInitialized = true
                     break;
                 case self.RESULT:
                     // Parse results?
-                    break;
+                    break
                 default:
                     print("Cannot parse JSON of type \(option)")
+                    break
                 }
             }
         }
