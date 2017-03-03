@@ -63,7 +63,7 @@ class StateController {
         print("init state")
         
         self.dataIsInitialized = false
-        postFromURL(option: TOKEN)
+        postFromURL(option: TOKEN, httpBody: createTokenJSON())
         
         // Add a null (id = 0) comment (its function TBD later, maybe errors?)
         comments.append(Comment(commentId: 0, subSectionId: -1, rank: -1, commentText: "ERROR, COMMENT WITH ID 0", defaultFlags: [Int8](), active: false))
@@ -217,16 +217,43 @@ class StateController {
     
     
     /* Database Integration Functions */
+    func createFlagString(flags: [Int]) -> String {
+        var flagString: String = ""
+        for flag in flags {
+            flagString += String(flag)
+        }
+        return flagString
+    }
     
-    func postFromURL(option: Int) {
-        var endPointURL: String = ""
+    func createTokenJSON() -> JSON {
         var body: JSON = [:]
+        body["username"].string = "Test"
+        body["password"].string = "badpassword1"
+        return body
+    }
+    
+    func createResultJSON(result: Result) -> JSON{
+        var body: JSON = [:]
+        body["id"].intValue = result.id
+        body["insp_id"].intValue = result.inspectionId
+        body["com_id"].intValue = result.commentId!
+        body["variant_id"].intValue = result.variantId!
+        body["add_on"].string = result.note
+        body["severity"].intValue = result.severity
+        //body["flags"].string = ...
+        //body["photoPath"].string = result.photoPath
+        return body
+    }
+    
+    func postFromURL(option: Int, httpBody: JSON) {
+        var endPointURL: String = ""
         
         switch option {
         case self.TOKEN:
             endPointURL = "http://crm.professionalhomeinspection.net/api/users/token.json"
-            body["username"].string = "Test"
-            body["password"].string = "badpassword1"
+            break
+        case self.RESULT:
+            endPointURL = "http://crm.professionalhomeinspection.net/api/results/add" + self.token!
             break
         default:
             break
@@ -240,8 +267,9 @@ class StateController {
         do {
             var urlRequest = URLRequest(url: url)
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.addValue("application/json", forHTTPHeaderField: "Accept")
             urlRequest.httpMethod = "POST"
-            try urlRequest.httpBody = body.rawData()
+            try urlRequest.httpBody = httpBody.rawData()
             
             let session = URLSession.shared
             let task = session.dataTask(with: urlRequest) {
@@ -262,6 +290,9 @@ class StateController {
                     case self.TOKEN:
                         self.parseToken(json: json)
                         break
+                    case self.RESULT:
+                        self.parseResult(json: json)
+                        break
                     default:
                         print("Cannot parse JSON of type \(option)")
                         break
@@ -272,6 +303,16 @@ class StateController {
         }
         catch {
             print("Caught exception in POST URL")
+        }
+    }
+    func parseResult(json: JSON) {
+        if !json["success"].boolValue {
+            print("Error with something")
+        }
+        else {
+            for (_, resultJson) in json["data"] {
+                //Do things with the data
+            }
         }
     }
     func parseToken(json: JSON) {
@@ -293,9 +334,10 @@ class StateController {
         case self.INSPECTION:
             break
         case self.DEFAULT_DATA:
-            endPointURL = "http://crm.professionalhomeinspection.net/sections.json"
+            endPointURL = "http://crm.professionalhomeinspection.net/api/sections.json" + self.token!
             break
         case self.RESULT:
+            endPointURL = "http://crm.professionalhomeinspection.net/api/results.json" + self.token!
             break
         default:
             break
@@ -334,6 +376,7 @@ class StateController {
                     self.dataIsInitialized = true
                     break;
                 case self.RESULT:
+                    //Write this function soon
                     // Parse results?
                     break
                 default:
@@ -346,40 +389,45 @@ class StateController {
     }
     
     func parseDefaultData(json: JSON) {
-        for (_, sectionJson) in json["sections"] {
-            self.sections.append(
-                Section(
-                    id: sectionJson["id"].intValue,
-                    name: sectionJson["name"].string
-                )
-            )
-            
-            for (_, subSectionJson) in sectionJson["subsections"] {
-                self.subsections.append(
-                    SubSection(
-                        subSectionId: subSectionJson["id"].intValue,
-                        name: subSectionJson["name"].string,
-                        sectionId: subSectionJson["sec_id"].intValue
+        if !json["success"].boolValue {
+            print("Error")
+        }
+        else {
+            for (_, sectionJson) in json["data"] {
+                self.sections.append(
+                    Section(
+                        id: sectionJson["id"].intValue,
+                        name: sectionJson["name"].string
                     )
                 )
                 
-                // Add subsec id to section's subsec list
-                self.sections.last!.subSectionIds.append(subsections.last!.subSectionId)
-                
-                for (_, commentJson) in subSectionJson["comments"] {
-                    self.comments.append(
-                        Comment(
-                            commentId: commentJson["id"].intValue,
-                            subSectionId: commentJson["subsec_id"].intValue,
-                            rank: commentJson["rank"].intValue,
-                            commentText: commentJson["comment"].string,
-                            defaultFlags: [], //Fix this
-                            active: commentJson["active"] == 1 ? true:false
+                for (_, subSectionJson) in sectionJson["subsections"] {
+                    self.subsections.append(
+                        SubSection(
+                            subSectionId: subSectionJson["id"].intValue,
+                            name: subSectionJson["name"].string,
+                            sectionId: subSectionJson["sec_id"].intValue
                         )
                     )
                     
-                    // Add comment id to subsection's comment list
-                    self.subsections.last!.commentIds.append(comments.last!.commentId)
+                    // Add subsec id to section's subsec list
+                    self.sections.last!.subSectionIds.append(subsections.last!.subSectionId)
+                    
+                    for (_, commentJson) in subSectionJson["comments"] {
+                        self.comments.append(
+                            Comment(
+                                commentId: commentJson["id"].intValue,
+                                subSectionId: commentJson["subsec_id"].intValue,
+                                rank: commentJson["rank"].intValue,
+                                commentText: commentJson["comment"].string,
+                                defaultFlags: [], //Fix this
+                                active: commentJson["active"] == 1 ? true:false
+                            )
+                        )
+                        
+                        // Add comment id to subsection's comment list
+                        self.subsections.last!.commentIds.append(comments.last!.commentId)
+                    }
                 }
             }
         }
